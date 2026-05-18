@@ -1,0 +1,145 @@
+#include <WiFi.h>
+#include <esp_now.h>
+#include <Wire.h>
+#include <Adafruit_BMP280.h>
+
+// SENSOR PINS
+#define PM_LED 23
+#define PM_VO 34
+#define MQ135_PIN 33
+#define MQ7_PIN 32
+
+Adafruit_BMP280 bmp;
+
+// Receiver MAC Address
+uint8_t receiverAddress[] = {0x3C, 0x8A, 0x1F, 0xA7, 0xAD, 0x14};
+
+
+// Structure to send data
+struct SensorData {
+  float dustDensity;
+  float co2ppm;
+  float coppm;
+  float temperature;
+  float pressure;
+  float altitude;
+};
+
+SensorData data;
+
+// Callback
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  Serial.print("Send Status: ");
+  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(PM_LED, OUTPUT);
+  digitalWrite(PM_LED, HIGH);
+
+  // BMP280
+  if (!bmp.begin(0x76)) {
+    Serial.println("BMP280 not found!");
+    while (1);
+  }
+
+  // WiFi Station Mode
+  WiFi.mode(WIFI_STA);
+
+  // Init ESP-NOW
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW Init Failed");
+    return;
+  }
+
+  esp_now_register_send_cb(OnDataSent);
+
+  esp_now_peer_info_t peerInfo;
+  memcpy(peerInfo.peer_addr, receiverAddress, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("Failed to add peer");
+    return;
+  }
+
+  Serial.println("Air Quality Monitoring Started..");
+}
+
+void loop() {
+
+  // GP2Y1010 Dust Sensor
+  digitalWrite(PM_LED, LOW);
+  delayMicroseconds(280);
+
+  int pmValue = analogRead(PM_VO);
+
+  delayMicroseconds(40);
+  digitalWrite(PM_LED, HIGH);
+  delayMicroseconds(9680);
+
+  float pmVoltage = pmValue * (3.3 / 4095.0);
+
+  data.dustDensity = 0.17 * pmVoltage - 0.1;
+
+  if (data.dustDensity < 0)
+    data.dustDensity = 0;
+
+  // MQ135
+  int mq135Value = analogRead(MQ135_PIN);
+  float mq135Volt = mq135Value * (3.3 / 4095.0);
+  data.co2ppm = mq135Volt * 2000;
+
+  //MQ7
+  int mq7Value = analogRead(MQ7_PIN);
+  float mq7Volt = mq7Value * (3.3 / 4095.0);
+  data.coppm = mq7Volt * 200;
+
+  // BMP280
+  data.temperature = bmp.readTemperature();
+  data.pressure = bmp.readPressure() / 100.0;
+  data.altitude = bmp.readAltitude(1013.25);
+
+  // Serial Monitor
+  Serial.println("==============================");
+
+  Serial.print("Dust Density: ");
+  Serial.print(data.dustDensity);
+  Serial.println(" mg/m3");
+
+  Serial.print("CO2: ");
+  Serial.print(data.co2ppm);
+  Serial.println(" ppm");
+
+  Serial.print("CO: ");
+  Serial.print(data.coppm);
+  Serial.println(" ppm");
+
+  Serial.print("Temperature: ");
+  Serial.print(data.temperature);
+  Serial.println(" C");
+
+  Serial.print("Pressure: ");
+  Serial.print(data.pressure);
+  Serial.println(" hPa");
+
+  Serial.print("Altitude: ");
+  Serial.print(data.altitude);
+  Serial.println(" m");
+
+  // Send Data
+  esp_err_t result = esp_now_send(receiverAddress, (uint8_t *) &data, sizeof(data));
+
+  if (result == ESP_OK) {
+    Serial.println("Data Sent Successfully");
+  } else {
+    Serial.println("Error Sending Data");
+  }
+
+  Serial.println("==============================\n");
+
+  delay(2000);
+}
