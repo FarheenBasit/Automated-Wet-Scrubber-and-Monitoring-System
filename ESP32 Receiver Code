@@ -1,0 +1,110 @@
+#include <WiFi.h>
+#include <esp_now.h>
+
+// Motor Driver Pins
+#define ENA 5
+#define IN1 18
+#define IN2 19
+
+// PWM
+#define PWM_CHANNEL 0
+#define PWM_FREQ 25000
+#define PWM_RESOLUTION 8
+
+// Structure
+struct SensorData {
+  float dustDensity;
+  float co2ppm;
+  float coppm;
+  float temperature;
+  float pressure;
+  float altitude;
+};
+
+SensorData incomingData;
+
+// Callback Function
+void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingDataBytes, int len) {
+
+  memcpy(&incomingData, incomingDataBytes, sizeof(incomingData));
+
+  Serial.println("========= RECEIVED DATA =========");
+
+  Serial.print("Dust Density: ");
+  Serial.println(incomingData.dustDensity);
+
+  Serial.print("CO2: ");
+  Serial.println(incomingData.co2ppm);
+
+  Serial.print("CO: ");
+  Serial.println(incomingData.coppm);
+
+  int fanSpeed = 0;
+
+  // Threshold Logic
+
+  if (incomingData.dustDensity > 0.25 || incomingData.co2ppm > 1200 || incomingData.coppm > 100) {
+    fanSpeed = 255; // Full Speed
+    Serial.println("AIR QUALITY BAD -> FAN FULL SPEED");
+  }
+  else if (incomingData.dustDensity > 0.15 || incomingData.co2ppm > 800 || incomingData.coppm > 50) {
+    fanSpeed = 180; // Medium Speed
+    Serial.println("AIR QUALITY MODERATE -> FAN MEDIUM SPEED");
+  }
+  else if (incomingData.dustDensity > 0.08 || incomingData.co2ppm > 500 || incomingData.coppm > 20) {
+    fanSpeed = 120; // Low Speed
+    Serial.println("AIR QUALITY NORMAL -> FAN LOW SPEED");
+  }
+  else {
+    fanSpeed = 0; // OFF
+    Serial.println("AIR QUALITY GOOD -> FAN OFF");
+  }
+
+  // Motor Direction
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+
+  // Set PWM Speed
+  ledcWrite(PWM_CHANNEL, fanSpeed);
+
+  Serial.print("Fan Speed PWM: ");
+  Serial.println(fanSpeed);
+
+  Serial.println("=================================\n");
+}
+
+void setup() {
+
+  Serial.begin(115200);
+
+  // Motor Driver Pins
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+
+  // PWM Setup
+  ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttachPin(ENA, PWM_CHANNEL);
+
+  ledcWrite(PWM_CHANNEL, 0);
+
+  // WiFi Station Mode
+  WiFi.mode(WIFI_STA);
+
+  Serial.print("Receiver MAC Address: ");
+  Serial.println(WiFi.macAddress());
+
+  //ESP NOW Init
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW Init Failed");
+    return;
+  }
+
+  // Register Receive Callback
+  esp_now_register_recv_cb(OnDataRecv);
+
+  Serial.println("Receiver Ready...");
+}
+
+void loop() {
+
+}
